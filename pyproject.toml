@@ -1,0 +1,64 @@
+[project]
+name = "otel-instrumentation-google-adk"
+version = "0.1.0"
+description = "OpenTelemetry instrumentation for Google ADK (Agent Development Kit)"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10,<3.13"
+authors = [
+    { name = "Okareo", email = "support@okareo.com" },
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+    "Topic :: System :: Monitoring",
+]
+dependencies = [
+    "google-adk>=1.2.1",
+    "opentelemetry-api>=1.0.0",
+    "opentelemetry-sdk>=1.0.0",
+    "opentelemetry-instrumentation>=0.40b0",
+    "wrapt>=1.0.0",
+    "typing-extensions>=4.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/okareo-ai/okareo-adk-otel"
+Repository = "https://github.com/okareo-ai/okareo-adk-otel"
+Issues = "https://github.com/okareo-ai/okareo-adk-otel/issues"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["otel_instrumentation_google_adk*"]
+
+[tool.setuptools.package-data]
+"otel_instrumentation_google_adk" = ["py.typed"]
+
+[project.entry-points."opentelemetry_instrumentor"]
+google-adk = "otel_instrumentation_google_adk:GoogleADKInstrumentor"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
