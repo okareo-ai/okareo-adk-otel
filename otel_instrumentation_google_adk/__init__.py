@@ -10,6 +10,7 @@ from opentelemetry.trace import Span, Tracer, get_current_span
 from opentelemetry.util._decorator import _agnosticcontextmanager
 from wrapt import resolve_path, wrap_function_wrapper
 
+from ._exporter import NonBlockingExporter
 from .version import __version__
 
 logger = logging.getLogger(__name__)
@@ -81,26 +82,31 @@ class GoogleADKInstrumentor(BaseInstrumentor):  # type: ignore
 
         from ._wrappers import _TraceCallLlm
 
+        original = getattr(base_llm_flow, "trace_call_llm", None)
+        if original is None:
+            logger.debug(
+                "google.adk.flows.llm_flows.base_llm_flow.trace_call_llm not found; "
+                "skipping trace_call_llm instrumentation",
+            )
+            return
+
         setattr(base_llm_flow, "tracer", self._tracer)
-        setattr(
-            base_llm_flow,
-            "trace_call_llm",
-            _TraceCallLlm(self._tracer)(base_llm_flow.trace_call_llm),  # type: ignore[attr-defined]
-        )
+        setattr(base_llm_flow, "trace_call_llm", _TraceCallLlm(self._tracer)(original))
 
     def _unpatch_trace_call_llm(self) -> None:
         from google.adk.flows.llm_flows import base_llm_flow
 
-        if callable(
-            original := getattr(base_llm_flow.trace_call_llm, "__wrapped__"),  # type: ignore[attr-defined]
-        ):
-            from google.adk.flows.llm_flows import (
-                base_llm_flow,
-            )
+        current = getattr(base_llm_flow, "trace_call_llm", None)
+        if current is None:
+            return
 
+        if callable(original := getattr(current, "__wrapped__", None)):
             setattr(base_llm_flow, "trace_call_llm", original)
 
-        from google.adk.telemetry import tracer
+        try:
+            from google.adk.telemetry import tracer
+        except ImportError:
+            return
 
         setattr(base_llm_flow, "tracer", tracer)
 
@@ -109,79 +115,81 @@ class GoogleADKInstrumentor(BaseInstrumentor):  # type: ignore
 
         from ._wrappers import _TraceToolCall
 
+        original = getattr(functions, "trace_tool_call", None)
+        if original is None:
+            logger.debug(
+                "google.adk.flows.llm_flows.functions.trace_tool_call not found; "
+                "skipping trace_tool_call instrumentation",
+            )
+            return
+
         setattr(functions, "tracer", self._tracer)
-        setattr(
-            functions,
-            "trace_tool_call",
-            _TraceToolCall(self._tracer)(functions.trace_tool_call),  # type: ignore[attr-defined]
-        )
+        setattr(functions, "trace_tool_call", _TraceToolCall(self._tracer)(original))
 
     def _unpatch_trace_tool_call(self) -> None:
-        from google.adk.flows.llm_flows.base_llm_flow import functions  # type: ignore[attr-defined]
+        from google.adk.flows.llm_flows import functions
 
-        if callable(
-            original := getattr(functions.trace_tool_call, "__wrapped__"),  # type: ignore[attr-defined]
-        ):
-            from google.adk.flows.llm_flows.base_llm_flow import (  # type: ignore[attr-defined]
-                functions,
-            )
+        current = getattr(functions, "trace_tool_call", None)
+        if current is None:
+            return
 
+        if callable(original := getattr(current, "__wrapped__", None)):
             setattr(functions, "trace_tool_call", original)
 
-        from google.adk.telemetry import tracer
+        try:
+            from google.adk.telemetry import tracer
+        except ImportError:
+            return
 
         setattr(functions, "tracer", tracer)
 
     def _disable_existing_tracers(self) -> None:
         """Disable existing tracers to prevent double-instrumentation."""
-        from google.adk.runners import (  # type: ignore[attr-defined]
-            tracer,  # pyright: ignore[reportPrivateImportUsage]
-        )
+        from google.adk import runners
 
-        if isinstance(tracer, Tracer):
-            from google.adk import runners
+        runners_tracer = getattr(runners, "tracer", None)
+        if isinstance(runners_tracer, Tracer):
+            setattr(runners, "tracer", _PassthroughTracer(runners_tracer))
 
-            setattr(runners, "tracer", _PassthroughTracer(tracer))
+        from google.adk.agents import base_agent
 
-        from google.adk.agents.base_agent import (  # type: ignore[attr-defined, unused-ignore]
-            tracer,  # pyright: ignore[reportPrivateImportUsage]
-        )
-
-        if isinstance(tracer, Tracer):
-            from google.adk.agents import base_agent
-
-            setattr(base_agent, "tracer", _PassthroughTracer(tracer))
+        base_agent_tracer = getattr(base_agent, "tracer", None)
+        if isinstance(base_agent_tracer, Tracer):
+            setattr(base_agent, "tracer", _PassthroughTracer(base_agent_tracer))
 
         from google.adk import __version__
 
         version = cast(tuple[int, int, int], tuple(int(x) for x in __version__.split(".")[:3]))
 
         if version >= (1, 15, 0):
-            from google.adk.telemetry import (  # type: ignore[attr-defined,import-not-found,unused-ignore]
-                tracing as adk_tracing,  # type: ignore[attr-defined,unused-ignore]
-            )
+            try:
+                from google.adk.telemetry import (  # type: ignore[attr-defined,import-not-found,unused-ignore]
+                    tracing as adk_tracing,  # type: ignore[attr-defined,unused-ignore]
+                )
+            except ImportError:
+                logger.debug("google.adk.telemetry.tracing not found; skipping")
+                return
 
-            if isinstance(adk_tracing.tracer, Tracer):
-                setattr(adk_tracing, "tracer", _PassthroughTracer(adk_tracing.tracer))
+            adk_tracing_tracer = getattr(adk_tracing, "tracer", None)
+            if isinstance(adk_tracing_tracer, Tracer):
+                setattr(adk_tracing, "tracer", _PassthroughTracer(adk_tracing_tracer))
 
     def _restore_existing_tracers(self) -> None:
         """Restore original tracers that were disabled during instrumentation."""
-        from google.adk.runners import (  # type: ignore[attr-defined]
-            tracer,  # pyright: ignore[reportPrivateImportUsage]
-        )
+        from google.adk import runners
 
-        if isinstance(original := getattr(tracer, "__wrapped__"), Tracer):
-            from google.adk import runners
-
+        runners_tracer = getattr(runners, "tracer", None)
+        if runners_tracer is not None and isinstance(
+            original := getattr(runners_tracer, "__wrapped__", None), Tracer
+        ):
             setattr(runners, "tracer", original)
 
-        from google.adk.agents.base_agent import (  # type: ignore[attr-defined, unused-ignore]
-            tracer,  # pyright: ignore[reportPrivateImportUsage]
-        )
+        from google.adk.agents import base_agent
 
-        if isinstance(original := getattr(tracer, "__wrapped__"), Tracer):
-            from google.adk.agents import base_agent
-
+        base_agent_tracer = getattr(base_agent, "tracer", None)
+        if base_agent_tracer is not None and isinstance(
+            original := getattr(base_agent_tracer, "__wrapped__", None), Tracer
+        ):
             setattr(base_agent, "tracer", original)
 
         from google.adk import __version__
@@ -189,11 +197,17 @@ class GoogleADKInstrumentor(BaseInstrumentor):  # type: ignore
         version = cast(tuple[int, int, int], tuple(int(x) for x in __version__.split(".")[:3]))
 
         if version >= (1, 15, 0):
-            from google.adk.telemetry import (  # type: ignore[attr-defined,import-not-found,unused-ignore]
-                tracing as adk_tracing,  # type: ignore[attr-defined,unused-ignore]
-            )
+            try:
+                from google.adk.telemetry import (  # type: ignore[attr-defined,import-not-found,unused-ignore]
+                    tracing as adk_tracing,  # type: ignore[attr-defined,unused-ignore]
+                )
+            except ImportError:
+                return
 
-            if isinstance(original := getattr(adk_tracing.tracer, "__wrapped__", None), Tracer):
+            adk_tracing_tracer = getattr(adk_tracing, "tracer", None)
+            if adk_tracing_tracer is not None and isinstance(
+                original := getattr(adk_tracing_tracer, "__wrapped__", None), Tracer
+            ):
                 setattr(adk_tracing, "tracer", original)
 
 

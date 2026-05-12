@@ -1,6 +1,6 @@
 [project]
 name = "otel-instrumentation-google-adk"
-version = "0.1.0"
+version = "0.2.2"
 description = "OpenTelemetry instrumentation for Google ADK (Agent Development Kit)"
 readme = "README.md"
 license = "Apache-2.0"
